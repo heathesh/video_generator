@@ -6,6 +6,9 @@ app and no cloud service: the model runs in Python on your Mac's GPU through PyT
 
 - **Text-to-video**: `POST` a prompt and get an MP4 back.
 - **Image-to-video**: `POST` a prompt plus an image, and the image becomes the first frame of the video.
+- **Audio** (optional): add `audio=true` to get a soundtrack in the MP4. You choose the audio model once with
+  `make setup-audio`, trading off sync to the video against licence terms. See
+  [Choosing an audio option](#choosing-an-audio-option).
 
 Built and tested on a MacBook M1 Pro with 32 GB of RAM.
 
@@ -17,7 +20,7 @@ Built and tested on a MacBook M1 Pro with 32 GB of RAM.
 |---|---|
 | Mac | Apple Silicon (M1/M2/M3/M4). 32 GB of unified memory recommended; 16 GB may work with small resolutions and frame counts. |
 | macOS | 13 (Ventura) or newer |
-| Disk | ~26 GB free for the model weights, plus room for generated videos |
+| Disk | ~27 GB free for the video model and dependencies, 5–11 GB more for an optional audio model, plus room for generated videos |
 | Tools | [Homebrew](https://brew.sh), Xcode Command Line Tools (`xcode-select --install`), `make` and `curl` (both ship with macOS) |
 
 You don't need to install Python yourself. [uv](https://docs.astral.sh/uv/) downloads the right version (3.12) into
@@ -27,13 +30,29 @@ the project.
 
 ## Quick start
 
+> [!IMPORTANT]
+> **The first-time setup downloads up to ~37 GB and can take hours.** Besides the Python packages, it downloads
+> the AI models themselves. This only happens once, since everything is cached afterwards. Rough times:
+>
+> | Download | Size | ~10 MB/s (80 Mbps) | ~3 MB/s (25 Mbps) |
+> |---|---|---|---|
+> | Python dependencies (`make setup`) | ~1.7 GB installed | ~3 min | ~10 min |
+> | Video model (`make download-model`) | ~25 GB | ~45 min | **~2–2.5 hours** |
+> | Audio model, optional (`make setup-audio`) | 5.3–10.7 GB, [depends on the option](#choosing-an-audio-option) | ~9–18 min | **~30–60 min** |
+>
+> The ~3 MB/s column matches a real first install on a home connection. Anonymous Hugging Face downloads can be
+> rate-limited, so log in first (see step 4 [below](#step-by-step-without-make)) to get the full speed of your
+> connection. If a download is interrupted, re-run the same command: the video model resumes where it stopped, and
+> the audio model keeps the files that finished and re-downloads only the one that was cut off.
+
 ```bash
 git clone <this repo> video_generator
 cd video_generator
 
-make setup            # 1. installs uv (via Homebrew) if missing, then Python 3.12 + all dependencies
-make download-model   # 2. downloads the model weights (~25 GB, one time only)
-make run              # 3. starts the API on http://127.0.0.1:8000
+make setup                  # 1. installs uv (via Homebrew) if missing, then Python 3.12 + all dependencies
+make download-model         # 2. downloads the video model weights (~25 GB, one time only)
+make setup-audio            #    optional: choose and download an audio model, only needed for audio=true
+make run                    # 3. starts the API on http://127.0.0.1:8000
 ```
 
 Then, in a second terminal:
@@ -85,14 +104,16 @@ Each `make` target is a thin wrapper, so you can run the commands yourself.
 |---|---|
 | `make help` | Lists all targets (also the default when you run `make`) |
 | `make setup` | Checks the Mac is Apple Silicon, installs `uv` via Homebrew if missing, runs `make install` |
-| `make install` | `uv sync`: installs Python 3.12 and all dependencies into `.venv` |
+| `make install` | `uv sync`: installs Python 3.12 and all dependencies into `.venv`, keeping the chosen audio option's |
 | `make download-model` | Pre-downloads the model weights (~25 GB) |
+| `make setup-audio` | Chooses, installs and downloads an audio model, and saves the choice to `.env`. Interactive, or `AUDIO=mmaudio` / `hunyuan-foley` / `stable-audio` / `none` |
 | `make run` | Starts the API server. Override the address with `HOST=0.0.0.0 PORT=9000` |
 | `make dev` | Same as `run`, but restarts on code changes (and reloads the model each time) |
 | `make test` | Runs the test suite. It uses a fake model, so it's fast and needs no download |
 | `make health` | `GET /health` against the running server |
 | `make example-text` | Submits a text-to-video job. Customize it with `PROMPT="..."` |
 | `make example-image` | Submits an image-to-video job: `IMAGE=path/to.png PROMPT="..."` |
+| `make example-audio` | Submits a text-to-video job with audio (run `make setup-audio` first). Customize it with `PROMPT="..."` |
 | `make clean` | Deletes `outputs/`, `.venv` and test caches. The model cache in `~/.cache/huggingface` is kept |
 
 ---
@@ -142,6 +163,55 @@ Response (both modes):
 }
 ```
 
+### Adding audio
+
+Once an audio option is set up (see below), add `audio=true` to either mode. After the video is generated, the audio
+model writes a soundtrack and the MP4 you download has it built in. It also stays next to the video as
+`outputs/<job_id>/audio.wav`:
+
+```bash
+curl -X POST http://127.0.0.1:8000/generate \
+  -F "prompt=A glass falls off a kitchen table and shatters on the tile floor" \
+  -F num_frames=97 \
+  -F audio=true \
+  -F "audio_prompt=glass shattering on tiles"     # optional, defaults to the video prompt
+```
+
+If audio isn't set up, `audio=true` returns `422`. Jobs without `audio=true` never load the audio model.
+
+### Choosing an audio option
+
+Run `make setup-audio`. It shows the options below, asks you to pick one and accept its licence, installs what that
+option needs, downloads its weights and saves the choice as `VIDEO_AUDIO_BACKEND` in `.env`. Restart the server
+afterwards. Run it again at any time to switch, or pick `none` to turn audio off. For scripts, use
+`make setup-audio AUDIO=mmaudio` (it still asks you to accept the licence).
+
+| Option | Synced to the video? | Commercial use | Max clip | Download |
+|---|---|---|---|---|
+| `mmaudio`: [MMAudio](https://github.com/hkchengrex/MMAudio) | **Yes.** It watches the frames, so a glass shatters on the impact frame | **No**, [CC-BY-NC 4.0](https://huggingface.co/hkchengrex/MMAudio) | 10 s | ~10.7 GB |
+| `hunyuan-foley`: [HunyuanVideo-Foley XL](https://github.com/Tencent-Hunyuan/HunyuanVideo-Foley) | **Yes.** It watches the frames too, with 48 kHz output | **Yes, with limits**: not licensed in the EU, UK or South Korea; over 100M monthly users needs Tencent's permission; shared output must be marked as AI-generated. [Licence](https://huggingface.co/tencent/HunyuanVideo-Foley/blob/main/LICENSE) | 15 s | ~10.6 GB |
+| `stable-audio`: [Stable Audio Open 1.0](https://huggingface.co/stabilityai/stable-audio-open-1.0) | **No.** It only reads the prompt, so the sound fits the scene but isn't timed to it | Yes, if you earn under US$1M a year. You must register with Stability AI and show "Powered by Stability AI" if you distribute it. [Licence](https://huggingface.co/stabilityai/stable-audio-open-1.0/blob/main/LICENSE.md) | 47 s | ~5.3 GB |
+| LTX-2 *(not available)* | Yes, since it generates video and audio together | Yes, under US$10M revenue | | Needs a Mac with 64 GB+ |
+
+- All options make sound effects and ambience (Stable Audio also music). None produces intelligible speech.
+- MMAudio is trained on 8-second clips. The default 2–4 second clips work well.
+- **Speed and memory** on an M1 Pro (32 GB), for a 2-second clip:
+
+  | Option | Time added per job | Peak extra memory | Notes |
+  |---|---|---|---|
+  | `mmaudio` | ~10 s (plus ~45 s to load on the first audio job) | ~5 GB | Stays loaded next to the video model |
+  | `hunyuan-foley` | ~50–70 s | ~14 GB | Runs as a separate process per job and frees its memory afterwards. On 32 GB, macOS swaps part of the idle video model out while it runs (about 9 GB of swap in testing). It works, but close other apps |
+  | `stable-audio` | not measured yet | | |
+
+- **HunyuanVideo-Foley runs in its own Python environment** (`backends/hunyuan_foley/`), because it needs versions
+  of numpy and transformers that clash with the rest of the app. `make setup-audio` clones it at a pinned commit
+  into `backends/hunyuan_foley/src`, applies a small patch so it runs on Apple Silicon (upstream hard-codes CUDA in
+  one place) and installs that environment.
+- **Stable Audio is gated on Hugging Face.** Before `make setup-audio`, open its
+  [model page](https://huggingface.co/stabilityai/stable-audio-open-1.0), accept the terms and run
+  `uv run hf auth login`. The setup checks this and tells you if it's missing.
+- `make install` keeps the chosen option's dependencies installed (it reads `.env`).
+
 ### Check status and download
 
 ```bash
@@ -184,7 +254,10 @@ jobs.
 | `fps` | `24` | Playback frame rate; also passed to the model |
 | `num_inference_steps` | `40` | More steps: better quality, slower. 20–30 is fine for drafts |
 | `guidance_scale` | `3.0` | How closely to follow the prompt (1–20) |
-| `seed` | random | Set it to reproduce a result |
+| `seed` | random | Set it to reproduce a result (also seeds the audio) |
+| `audio` | `false` | `true` adds a soundtrack. Needs `make setup-audio`, and the clip must fit the option's max length (see above) |
+| `audio_prompt` | the `prompt` | Describe the sounds you want |
+| `audio_num_inference_steps` | `25` (mmaudio), `50` (hunyuan-foley), `100` (stable-audio) | Audio sampling steps |
 
 The values you actually get back, after rounding, are shown in the job's `params`.
 
@@ -222,6 +295,14 @@ Settings come from environment variables prefixed with `VIDEO_`, or from a `.env
 | `VIDEO_OUTPUT_DIR` | `outputs` | Where videos and uploaded images are stored |
 | `VIDEO_DEFAULT_WIDTH` / `_HEIGHT` / `_NUM_FRAMES` / `_NUM_INFERENCE_STEPS` / `_GUIDANCE_SCALE` / `_FPS` / `_NEGATIVE_PROMPT` | see above | Request defaults |
 | `VIDEO_MAX_WIDTH` / `_HEIGHT` / `_NUM_FRAMES` / `_NUM_INFERENCE_STEPS` / `_UPLOAD_MB` | 1280 / 1280 / 257 / 100 / 20 | Request limits |
+| `VIDEO_AUDIO_BACKEND` | `none` | `mmaudio`, `hunyuan-foley`, `stable-audio` or `none`. Set by `make setup-audio` |
+| `VIDEO_AUDIO_DTYPE` | `bfloat16` | Try `float32` if the audio comes out silent or as noise |
+| `VIDEO_DEFAULT_AUDIO_NUM_INFERENCE_STEPS` / `_AUDIO_GUIDANCE_SCALE` / `_AUDIO_NEGATIVE_PROMPT` | the option's own (mmaudio 25 / 4.5, hunyuan-foley 50 / 4.5, stable-audio 100 / 7) / empty | Audio defaults |
+| `VIDEO_AUDIO_VARIANT` | `large_44k_v2` | MMAudio model size: `small_16k`, `small_44k`, `medium_44k`, `large_44k`, `large_44k_v2` |
+| `VIDEO_AUDIO_WEIGHTS_DIR` | `~/.cache/mmaudio` | Where the MMAudio weights are stored |
+| `VIDEO_HUNYUAN_FOLEY_WEIGHTS_DIR` | `~/.cache/hunyuan-foley` | Where the HunyuanVideo-Foley weights are stored |
+| `VIDEO_HUNYUAN_FOLEY_OFFLOAD` | `true` | Load its sub-models on demand to lower peak memory |
+| `VIDEO_STABLE_AUDIO_MODEL_ID` | `stabilityai/stable-audio-open-1.0` | The Stable Audio repo |
 
 Example: `VIDEO_DEFAULT_NUM_FRAMES=49 make run`
 
@@ -235,6 +316,10 @@ Example: `VIDEO_DEFAULT_NUM_FRAMES=49 make run`
 | Black, noisy or garbled video | Set `VIDEO_DTYPE=float32` and restart |
 | `NotImplementedError ... MPS` | The server already sets `PYTORCH_ENABLE_MPS_FALLBACK=1` so missing ops run on the CPU. Update with `uv sync --upgrade` |
 | Image-to-video ignores the image composition | Match `width`/`height` to your image's aspect ratio, since the image is center-cropped to fit |
+| `audio=true` returns 422 "audio isn't set up" | Run `make setup-audio` and restart the server |
+| Audio is silent, noise, or the job fails in the audio step | Set `VIDEO_AUDIO_DTYPE=float32` and restart |
+| A `hunyuan-foley` job fails with "isn't installed" | Run `make setup-audio AUDIO=hunyuan-foley` again |
+| `make setup-audio` says it can't download Stable Audio | Accept the terms on its [model page](https://huggingface.co/stabilityai/stable-audio-open-1.0) with the account you logged in with (`uv run hf auth login`) |
 | Stop the server | `Ctrl+C` in its terminal. Queued jobs live in memory and are lost on restart; finished videos stay in `outputs/` |
 
 ## Development
@@ -249,4 +334,6 @@ See [CLAUDE.md](CLAUDE.md) for the architecture and conventions.
 ## License
 
 MIT for this code (see [LICENSE](LICENSE)). The LTX-Video weights have their own license on the
-[model page](https://huggingface.co/Lightricks/LTX-Video-0.9.5); review it before any commercial use.
+[model page](https://huggingface.co/Lightricks/LTX-Video-0.9.5); review it before any commercial use. Each audio
+option has its own licence (see [Choosing an audio option](#choosing-an-audio-option)). In particular, audio made
+with `mmaudio` is for non-commercial use only.

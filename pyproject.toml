@@ -22,6 +22,13 @@ dependencies = [
     "uvicorn[standard]>=0.32",
 ]
 
+[project.optional-dependencies]
+# Audio backends, installed by `make setup-audio` for the one you choose. stable-audio needs nothing extra.
+mmaudio = [
+    "mmaudio",
+    "torchvision>=0.29.0",
+]
+
 [dependency-groups]
 dev = [
     "httpx2>=2.13.1",
@@ -35,3 +42,15 @@ pythonpath = ["."]
 [tool.pyright]
 venvPath = "."
 venv = ".venv"
+
+[tool.uv]
+# The mmaudio extra pins numpy<2.1 and pulls in gradio/tensorboard for its demo and training code. Inference works with
+# numpy 2, and the demo/training extras are dropped (the never-matching marker removes them).
+override-dependencies = [
+    "numpy>=2",
+    "gradio; sys_platform == 'never'",
+    "tensorboard; sys_platform == 'never'",
+]
+
+[tool.uv.sources]
+mmaudio = { git = "https://github.com/hkchengrex/MMAudio", rev = "974010a026c731054592d8f777218bd9d85a6c24" }

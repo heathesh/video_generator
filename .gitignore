@@ -219,3 +219,6 @@ __marimo__/
 
 # Generated videos
 outputs/
+
+# HunyuanVideo-Foley source checkout and its isolated environment (created by make setup-audio)
+backends/hunyuan_foley/src/

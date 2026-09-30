@@ -7,6 +7,7 @@ from typing import Protocol
 
 from PIL import Image, ImageOps
 
+from app.audio import AudioBackend, make_audio_backend
 from app.config import Settings
 
 # Let PyTorch fall back to the CPU for any op not yet implemented on Apple's MPS backend.
@@ -31,6 +32,9 @@ class VideoParams:
     guidance_scale: float
     seed: int
     fps: int
+    audio: bool = False
+    audio_prompt: str | None = None  # None: reuse the video prompt
+    audio_num_inference_steps: int = 25
 
 
 def snap_dimension(value: int) -> int:
@@ -60,23 +64,24 @@ class Generator(Protocol):
     def generate(self, params: VideoParams, image: Image.Image | None, output_path: Path) -> Path: ...
 
 
+def resolve_device(requested: str) -> str:
+    import torch
+
+    if requested != "auto":
+        return requested
+    return "mps" if torch.backends.mps.is_available() else "cpu"
+
+
 class LTXVideoGenerator:
     """Wraps the diffusers LTXConditionPipeline for text-to-video and image-to-video on Apple Silicon."""
 
     def __init__(self, settings: Settings):
         self.settings = settings
         self.model_id = settings.model_id
-        self.device = self._resolve_device(settings.device)
+        self.device = resolve_device(settings.device)
         self.loaded = False
         self._pipe = None
-
-    @staticmethod
-    def _resolve_device(requested: str) -> str:
-        import torch
-
-        if requested != "auto":
-            return requested
-        return "mps" if torch.backends.mps.is_available() else "cpu"
+        self._audio: AudioBackend | None = None
 
     def load(self) -> None:
         import torch
@@ -125,6 +130,12 @@ class LTXVideoGenerator:
             ).frames[0]
             output_path.parent.mkdir(parents=True, exist_ok=True)
             export_to_video(frames, str(output_path), fps=params.fps)
+            if params.audio:
+                if self._audio is None:
+                    self._audio = make_audio_backend(self.settings, self.device)
+                if self._audio is None:
+                    raise RuntimeError("audio was requested but no audio backend is set up (run make setup-audio)")
+                self._audio.add_audio(params, output_path)
         finally:
             gc.collect()
             if self.device == "mps":

@@ -22,6 +22,8 @@ ALLOWED_IMAGE_FORMATS = {"PNG", "JPEG", "WEBP"}
 def create_app(settings: Settings | None = None, generator: Generator | None = None) -> FastAPI:
     settings = settings or get_settings()
     video_generator: Generator = generator or LTXVideoGenerator(settings)
+    audio_info = settings.audio
+    default_audio_steps = audio_info.num_inference_steps if audio_info else VideoParams.audio_num_inference_steps
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -54,6 +56,7 @@ def create_app(settings: Settings | None = None, generator: Generator | None = N
             "model_loaded": video_generator.loaded,
             "load_error": manager.load_error,
             "queued_jobs": manager.pending,
+            "audio_backend": settings.audio_backend,
         }
 
     @app.post("/generate", status_code=status.HTTP_202_ACCEPTED)
@@ -68,6 +71,9 @@ def create_app(settings: Settings | None = None, generator: Generator | None = N
         guidance_scale: Annotated[float | None, Form(ge=1.0, le=20.0)] = None,
         seed: Annotated[int | None, Form(ge=0, le=2**32 - 1)] = None,
         fps: Annotated[int | None, Form(ge=1, le=60)] = None,
+        audio: Annotated[bool, Form(description="Add a soundtrack with the configured audio backend")] = False,
+        audio_prompt: Annotated[str | None, Form(max_length=2000)] = None,
+        audio_num_inference_steps: Annotated[int | None, Form(ge=1, le=settings.max_num_inference_steps)] = None,
     ) -> dict:
         if not prompt.strip():
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "prompt must not be blank")
@@ -84,7 +90,21 @@ def create_app(settings: Settings | None = None, generator: Generator | None = N
             guidance_scale=guidance_scale if guidance_scale is not None else settings.default_guidance_scale,
             seed=seed if seed is not None else random.randint(0, 2**32 - 1),
             fps=fps or settings.default_fps,
+            audio=audio,
+            audio_prompt=audio_prompt.strip() or None if audio_prompt else None,
+            audio_num_inference_steps=audio_num_inference_steps or default_audio_steps,
         )
+        if audio:
+            if audio_info is None:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT, "audio isn't set up on this server (run make setup-audio)"
+                )
+            if params.num_frames / params.fps > audio_info.max_seconds:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    f"video is {params.num_frames / params.fps:.1f} s; {settings.audio_backend} audio supports at "
+                    f"most {audio_info.max_seconds:g} s (lower num_frames or raise fps)",
+                )
         manager = get_manager()
         job = manager.submit(params, pil_image)
         return job.to_dict(manager.queue_position(job))

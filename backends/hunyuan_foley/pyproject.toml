@@ -1,0 +1,38 @@
+# Isolated environment for the hunyuan-foley audio backend. HunyuanVideo-Foley pins numpy 1.26 and a transformers
+# fork that conflict with the main app, so it gets its own .venv here and the app runs run.py as a subprocess.
+# `make setup-audio AUDIO=hunyuan-foley` clones the upstream repo into ./src, applies mps.patch and runs `uv sync`.
+[project]
+name = "hunyuan-foley-backend"
+version = "0.0.0"
+requires-python = ">=3.12,<3.13"
+# Upstream requirements.txt, minus gradio (its web demo) and its development tools. huggingface-hub is capped because
+# the transformers fork predates huggingface-hub 1.0.
+dependencies = [
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "numpy==1.26.4",
+    "scipy",
+    "diffusers",
+    "timm",
+    "accelerate",
+    "transformers @ git+https://github.com/huggingface/transformers@v4.49.0-SigLIP-2",
+    "sentencepiece",
+    "descript-audiotools @ git+https://github.com/descriptinc/audiotools",
+    "pillow",
+    "av",
+    "einops",
+    "pyyaml",
+    "omegaconf",
+    "easydict",
+    "loguru",
+    "tqdm",
+    "setuptools",
+    "pandas",
+    "pyarrow",
+    "urllib3==2.4.0",
+    "huggingface-hub<1.0",
+]
+
+[tool.uv]
+package = false
